@@ -44,6 +44,9 @@
 @RESPATH@/chrome/@AB_CD@@JAREXT@
 @RESPATH@/chrome/@AB_CD@.manifest
 @RESPATH@/dictionaries/*
+#if defined(XP_WIN) || defined(XP_LINUX)
+@RESPATH@/fonts/*
+#endif
 @RESPATH@/hyphenation/*
 @RESPATH@/defaults/pref/ambassador-l10n.js
 #ifdef XP_WIN32
@@ -130,13 +133,6 @@
 @RESPATH@/run-mozilla.sh
 #endif
 #endif
-#ifdef XP_WIN
-#ifdef _AMD64_
-@BINPATH@/@DLL_PREFIX@qipcap64@DLL_SUFFIX@
-#else
-@BINPATH@/@DLL_PREFIX@qipcap@DLL_SUFFIX@
-#endif
-#endif
 
 ; [Components]
 @RESPATH@/components/*
@@ -192,21 +188,21 @@
 @RESPATH@/chrome/recording.manifest
 @RESPATH@/chrome/recording/*
 #ifdef MOZ_GTK
-@RESPATH@/chrome/icons/default/default16.png
-@RESPATH@/chrome/icons/default/default32.png
-@RESPATH@/chrome/icons/default/default48.png
+@RESPATH@/chrome/icons/default/ambassador-window16.png
+@RESPATH@/chrome/icons/default/ambassador-window32.png
+@RESPATH@/chrome/icons/default/ambassador-window48.png
 #endif
 
 #ifdef MOZ_DEVTOOLS
 ; [Webide Files]
 @RESPATH@/chrome/webide@JAREXT@
 @RESPATH@/chrome/webide.manifest
-; FIXME @RESPATH@/browser/@PREF_DIR@/webide-prefs.js
+@RESPATH@/@PREF_DIR@/webide-prefs.js
 
 ; DevTools
 @RESPATH@/chrome/devtools@JAREXT@
 @RESPATH@/chrome/devtools.manifest
-; FIXME @RESPATH@/browser/@PREF_DIR@/devtools.js
+@RESPATH@/@PREF_DIR@/devtools.js
 #endif
 
 ; shell icons

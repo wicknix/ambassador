@@ -143,8 +143,6 @@ function initMenus()
          ["delete-view", {visibleif: "!" + ChannelActive + " and !" + DCCActive}],
          ["disconnect",  {visibleif: NetConnected}],
          ["reconnect",   {visibleif: NetDisconnected}],
-         ["-"],
-         ["toggle-text-dir"]
         ]
     };
 
@@ -223,6 +221,7 @@ function initMenus()
          ["-"],
          [">popup:motifs"],
          [">popup:fonts"],
+         ["toggle-text-dir"],
          ["-"],
          ["toggle-ccm",
                  {type: "checkbox",
@@ -243,7 +242,11 @@ function initMenus()
         items:
         [
          ["add-ons",     {visibleif: XULRunner}],
+         ["-",           {visibleif: XULRunner}],
          ["jsconsole",   {visibleif: XULRunner}],
+         ["scratchpad",  {visibleif: XULRunner + " and client.devtoolsEnabled"}],
+         ["devtools",    {visibleif: XULRunner + " and client.devtoolsEnabled"}],
+         ["-",           {visibleif: XULRunner}],
          ["about-config",{visibleif: XULRunner}],
          ["passmgr"],
          ["certmgr"],
@@ -264,7 +267,9 @@ function initMenus()
          ["-", {visibleif: Mozilla}],
          ["homepage"],
          ["faq"],
+         ["support-channel"],
          ["-"],
+         ["about-buildconfig", {visibleif: XULRunner}],
          ["about", {id: "aboutName"}]
         ]
     };
@@ -402,8 +407,6 @@ function initMenus()
          ["delete-view", {visibleif: "!" + ChannelActive + " and !" + DCCActive}],
          ["disconnect",  {visibleif: NetConnected}],
          ["reconnect",   {visibleif: NetDisconnected}],
-         ["-"],
-         ["toggle-text-dir"]
         ]
     };
 
@@ -425,8 +428,6 @@ function initMenus()
          ["reconnect",   {visibleif: NetDisconnected}],
          ["-"],
          ["rename"],
-         ["-"],
-         ["toggle-text-dir"]
         ]
     };
 

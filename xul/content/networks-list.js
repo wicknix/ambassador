@@ -19,12 +19,13 @@ function CIRCDCCUser() {}
 function CIRCDCCChat() {}
 function CIRCDCCFile() {}
 function CIRCDCCFileTransfer() {}
+function CIRCSTS() {}
 
 // Stores network item data.
-function NetworkObject(name)
+function NetworkObject(name, displayName)
 {
     this.name = name;
-    this.displayName = name;
+    this.displayName = displayName || name;
     this.servers = new Array();
     return this;
 };
@@ -222,8 +223,10 @@ function ntree_loadData()
         networkEditor.style.display = null;
 
         var editName = document.getElementById("editor-network-name");
+        var editDisplayName = document.getElementById("editor-network-displayname");
 
         editName.value = item.data.name;
+        editDisplayName.value = item.data.displayName;
     }
     else
     {
@@ -344,7 +347,7 @@ function nwin_onLoad()
         if (net.isDeleted)
             return;
 
-        var no = new NetworkObject(net.name);
+        var no = new NetworkObject(net.name, net.displayName);
         var obj = this.networkTree.addObject(no);
         net.servers.forEach(function (serv)
         {
@@ -452,7 +455,7 @@ function nwin_onRestore()
 
     networkList.forEach(function (net)
     {
-        var no = new NetworkObject(net.name);
+        var no = new NetworkObject(net.name, net.displayName);
         var obj = this.networkTree.addObject(no);
         net.servers.forEach(function (serv)
         {
@@ -626,7 +629,7 @@ function nwin_onDeleteObject()
 
 /* Network or server object change */
 NetworkWindow.prototype.onObjectChange =
-function nwin_onObjectChange()
+function nwin_onObjectChange(obj)
 {
     var index = this.networkTree.selectedIndex();
     var item = this.networkTree.treeObj.view.getItemAtIndex(index);
@@ -634,8 +637,10 @@ function nwin_onObjectChange()
     if (item.data instanceof NetworkObject)
     {
         var editName = document.getElementById("editor-network-name");
+        var editDisplayName = document.getElementById("editor-network-displayname");
 
         item.data.name = editName.value;
+        item.data.displayName = editDisplayName.value;
         item.cell.setAttribute("label", item.data.getLabel());
     }
     else
@@ -646,7 +651,8 @@ function nwin_onObjectChange()
 
         item.data.hostname = editHostname.value;
         item.data.port = editPort.value;
-        item.data.isSecure = !editSecure.checked;
+        item.data.isSecure = (obj == editSecure ? !editSecure.checked : editSecure.checked);
+
         // If isSecure is false, just delete it.
         if (!item.data.isSecure)
             delete item.data.isSecure;

@@ -7,15 +7,15 @@ Ambassador is a fork of the ChatZilla IRC client built upon the [Unified XUL Pla
 The add-on is compatible with the following UXP-based applications:
 - [Pale Moon](http://www.palemoon.org/)
 - [Basilisk](http://basilisk-browser.org/)
+- [Interlink](http://binaryoutcast.com/projects/interlink/)
 
 The stand-alone version can be downloaded in the following formats:
 - Windows 64-bit installer
 - Windows 64-bit ZIP archive
 - Windows 32-bit installer
 - Windows 32-bit ZIP archive
+- Mac OS X 64-bit DMG file
 - Linux 64-bit tarball
-
-MacOS is not supported at this time. If you would like to contribute to Ambassador development on MacOS, please contact me.
 
 ## Features
 
@@ -24,6 +24,7 @@ Ambassador includes most of the features found in ChatZilla, along with some uni
 - Password management
 - A window for viewing secure connection details
 - An editor for the built-in networks list
+- CTCP request notifications
 - Several new commands
 - Removed CEIP
 

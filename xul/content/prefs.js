@@ -204,7 +204,7 @@ function initPrefs()
                                           "hidden"],
          ["proxy.typeOverride", "",       ".connect"],
          ["reconnect",          true,     ".connect"],
-         ["sasl.enabled",       false,    ".ident"],
+         ["sasl.plain.enabled", false,    ".ident"],
          ["websearch.url",      "",       "global"],
          ["showModeSymbols",    false,    "appearance.userlist"],
          ["sortUsersByMode",    true,     "appearance.userlist"],
@@ -222,11 +222,13 @@ function initPrefs()
          ["sound.user.start",    "beep beep", ".soundEvts"],
          ["stalkWholeWords",    true,     "lists.stalkWords"],
          ["stalkWords",         [],       "lists.stalkWords"],
+         ["sts.enabled",        true,     ".connect"],
          ["tabLabel",           "",       "hidden"],
          ["tabGotoKeyModifiers", 0,       "hidden"],
          ["timestamps",         false,    "appearance.timestamps"],
          ["timestamps.display", "[%H:%M]", "appearance.timestamps"],
          ["timestamps.log",     "[%Y-%m-%d %H:%M:%S]", "hidden"],
+         ["upgrade-insecure",   false,    ".connect"],
          ["urls.display",       10,       "hidden"],
          ["urls.store.max",     100,      "global"],
          ["userHeader",         true,     "global.header"],
@@ -249,6 +251,9 @@ function initPrefs()
     CIRCNetwork.prototype.INITIAL_UMODE = client.prefs["usermode"];
     CIRCNetwork.prototype.MAX_MESSAGES  = client.prefs["networkMaxLines"];
     CIRCNetwork.prototype.PROXY_TYPE_OVERRIDE = client.prefs["proxy.typeOverride"];
+    CIRCNetwork.prototype.USE_SASL      = client.prefs["sasl.plain.enabled"];
+    CIRCNetwork.prototype.UPGRADE_INSECURE = client.prefs["upgrade-insecure"];
+    CIRCNetwork.prototype.STS_MODULE.ENABLED = client.prefs["sts.enabled"];
     CIRCChannel.prototype.MAX_MESSAGES  = client.prefs["channelMaxLines"];
     CIRCUser.prototype.MAX_MESSAGES     = client.prefs["userMaxLines"];
     CIRCDCCChat.prototype.MAX_MESSAGES  = client.prefs["dccUserMaxLines"];
@@ -433,7 +438,7 @@ function getNetworkPrefManager(network)
          ["outputWindowURL",  defer, "hidden"],
          ["proxy.typeOverride", defer, ".connect"],
          ["reconnect",        defer, ".connect"],
-         ["sasl.enabled",     defer, ".ident"],
+         ["sasl.plain.enabled",  defer, ".ident"],
          ["sound.channel.chat",  defer, ".soundEvts"],
          ["sound.channel.event", defer, ".soundEvts"],
          ["sound.channel.stalk", defer, ".soundEvts"],
@@ -444,6 +449,7 @@ function getNetworkPrefManager(network)
          ["timestamps",         defer, "appearance.timestamps"],
          ["timestamps.display", defer, "appearance.timestamps"],
          ["timestamps.log",     defer, "hidden"],
+         ["upgrade-insecure",   defer, ".connect"],
          ["usermode",         defer, ".ident"],
          ["username",         defer, ".ident"]
         ];
@@ -474,6 +480,14 @@ function getNetworkPrefManager(network)
     value = prefManager.prefs["proxy.typeOverride"];
     if (value != CIRCNetwork.prototype.PROXY_TYPE_OVERRIDE)
         network.PROXY_TYPE_OVERRIDE = value;
+
+    value = prefManager.prefs["sasl.plain.enabled"];
+    if (value != CIRCNetwork.prototype.USE_SASL)
+        network.USE_SASL = value;
+
+    value = prefManager.prefs["upgrade-insecure"];
+    if (value != CIRCNetwork.prototype.UPGRADE_INSECURE)
+        network.UPGRADE_INSECURE = value;
 
     network.stayingPower  = prefManager.prefs["reconnect"];
     network.MAX_CONNECT_ATTEMPTS = prefManager.prefs["connectTries"];
@@ -734,6 +748,18 @@ function onPrefChanged(prefName, newValue, oldValue)
                 setListMode("graphic");
             break;
 
+        case "sasl.plain.enabled":
+            CIRCNetwork.prototype.USE_SASL = newValue;
+            break;
+
+        case "upgrade-insecure":
+            CIRCNetwork.prototype.UPGRADE_INSECURE = newValue;
+            break;
+
+        case "sts.enabled":
+            CIRCNetwork.prototype.STS_MODULE.ENABLED = newValue;
+            break;
+
         case "nickname":
             CIRCNetwork.prototype.INITIAL_NICK = newValue;
             break;
@@ -906,6 +932,19 @@ function onNetworkPrefChanged(network, prefName, newValue, oldValue)
             network.dispatch("sync-motif");
             break;
 
+        case "notifyList":
+            if (!network.primServ.supports["monitor"])
+                break;
+            var adds = newValue.filter((el) =>
+                { return oldValue.indexOf(el) < 0; });
+            var subs = oldValue.filter((el) =>
+                { return newValue.indexOf(el) < 0; });
+            if (adds.length > 0)
+                network.primServ.sendMonitorList(adds, true);
+            if (subs.length > 0)
+                network.primServ.sendMonitorList(subs, false);
+            break;
+
         case "outputWindowURL":
             network.dispatch("sync-window");
             break;
@@ -931,6 +970,14 @@ function onNetworkPrefChanged(network, prefName, newValue, oldValue)
 
         case "connectTries":
             network.MAX_CONNECT_ATTEMPTS = newValue;
+            break;
+
+        case "sasl.plain.enabled":
+            network.USE_SASL = newValue;
+            break;
+
+        case "upgrade-insecure":
+            network.UPGRADE_INSECURE = newValue;
             break;
     }
 }

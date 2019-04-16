@@ -14,6 +14,7 @@ function initCommands()
     var cmdary =
         [/* "real" commands */
          ["about",             cmdAbout,                           CMD_CONSOLE],
+         ["about-buildconfig", cmdAboutBuildConfig,                          0],
          ["about-config",      cmdAboutConfig,                               0],
          ["add-ons",           cmdAddons,                                    0],
          ["alias",             cmdAlias,                           CMD_CONSOLE],
@@ -68,6 +69,7 @@ function initCommands()
          ["default-charset",   cmdCharset,                         CMD_CONSOLE],
          ["delete-view",       cmdDeleteView,                      CMD_CONSOLE],
          ["desc",              cmdDesc,                            CMD_CONSOLE],
+         ["devtools",          cmdDevtools,                                  0],
          ["disable-plugin",    cmdAblePlugin,                      CMD_CONSOLE],
          ["disconnect",        cmdDisconnect,       CMD_NEED_SRV | CMD_CONSOLE],
          ["disconnect-all",    cmdDisconnectAll,                   CMD_CONSOLE],
@@ -148,6 +150,7 @@ function initCommands()
          ["reload-ui",         cmdReloadUI,                                  0],
          ["save",              cmdSave,                            CMD_CONSOLE],
          ["say",               cmdSay,                             CMD_CONSOLE],
+         ["scratchpad",        cmdScratchpad,                                0],
          ["server",            cmdServer,                          CMD_CONSOLE],
          ["set-current-view",  cmdSetCurrentView,                            0],
          ["stats",             cmdSimpleCommand,    CMD_NEED_SRV | CMD_CONSOLE],
@@ -198,6 +201,7 @@ function initCommands()
          // Shortcuts to useful URLs:
          ["faq",              "goto-url-newtab faq",                         0],
          ["homepage",         "goto-url-newtab homepage",                    0],
+         ["support-channel",  "goto-url channel",                            0],
          // Used to display a nickname in the menu only.
          ["label-user",       "echo",                                        0],
          ["label-user-multi", "echo",                                        0],
@@ -2072,9 +2076,12 @@ function _sendMsgTo(message, msgType, target, displayObj)
     for (var i = 0; i < lines.length; i++)
     {
         msg = lines[i];
-        client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
-        displayObj.display(msg, msgType, "ME!", target);
-        client.munger.getRule(".mailto").enabled = false;
+        if (!(o.server && o.server.caps["echo-message"]))
+        {
+            client.munger.getRule(".mailto").enabled = client.prefs["munger.mailto"];
+            displayObj.display(msg, msgType, "ME!", target);
+            client.munger.getRule(".mailto").enabled = false;
+        }
         if (msgType == "PRIVMSG")
             target.say(msg);
         else if (msgType == "NOTICE")
@@ -3283,17 +3290,26 @@ function cmdClient(e)
 function cmdNotify(e)
 {
     var net = e.network;
+    var supports_monitor = net.primServ.supports["monitor"];
 
     if (!e.nickname)
     {
         if (net.prefs["notifyList"].length > 0)
         {
-            /* delete the lists and force a ISON check, this will
-             * print the current online/offline status when the server
-             * responds */
-            delete net.onList;
-            delete net.offList;
-            onNotifyTimeout();
+            if (supports_monitor)
+            {
+                // Just get the status of the monitor list from the server.
+                net.primServ.sendData("MONITOR S\n");
+            }
+            else
+            {
+                /* delete the lists and force a ISON check, this will
+                 * print the current online/offline status when the server
+                 * responds */
+                delete net.onList;
+                delete net.offList;
+                onNotifyTimeout();
+            }
         }
         else
         {
@@ -3328,6 +3344,9 @@ function cmdNotify(e)
 
         if (adds.length > 0)
         {
+            if (supports_monitor)
+                net.primServ.sendMonitorList(adds, true);
+
             msgname = (adds.length == 1) ? MSG_NOTIFY_ADDONE :
                                            MSG_NOTIFY_ADDSOME;
             display(getMsg(msgname, arraySpeak(adds)));
@@ -3335,6 +3354,9 @@ function cmdNotify(e)
 
         if (subs.length > 0)
         {
+            if (supports_monitor)
+                net.primServ.sendMonitorList(subs, false);
+
             msgname = (subs.length == 1) ? MSG_NOTIFY_DELONE :
                                            MSG_NOTIFY_DELSOME;
             display(getMsg(msgname, arraySpeak(subs)));
@@ -3342,7 +3364,8 @@ function cmdNotify(e)
 
         delete net.onList;
         delete net.offList;
-        onNotifyTimeout();
+        if (!supports_monitor)
+            onNotifyTimeout();
     }
 }
 
@@ -4057,8 +4080,6 @@ function cmdFont(e)
 
 function cmdDCCChat(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4086,8 +4107,6 @@ function cmdDCCChat(e)
 
 function cmdDCCClose(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4132,8 +4151,6 @@ function cmdDCCClose(e)
 
 function cmdDCCSend(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4211,8 +4228,6 @@ function cmdDCCSend(e)
 }
 
 function cmdDCCList(e) {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4300,8 +4315,6 @@ function cmdDCCList(e) {
 
 function cmdDCCAutoAcceptList(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4317,8 +4330,6 @@ function cmdDCCAutoAcceptList(e)
 
 function cmdDCCAutoAcceptAdd(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4345,8 +4356,6 @@ function cmdDCCAutoAcceptAdd(e)
 
 function cmdDCCAutoAcceptDel(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4381,8 +4390,6 @@ function cmdDCCAutoAcceptDel(e)
 
 function cmdDCCAccept(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4450,8 +4457,6 @@ function cmdDCCAccept(e)
 
 function cmdDCCDecline(e)
 {
-    if (!jsenv.HAS_SERVER_SOCKETS)
-        return display(MSG_DCC_NOT_POSSIBLE);
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
@@ -4742,24 +4747,53 @@ function cmdWebSearch(e)
 
 function cmdAddons(e)
 {
-    client.toOpenWindowByType("Addons:Manager",
+    toOpenWindowByType("Addons:Manager",
                        "chrome://mozapps/content/extensions/extensions.xul");
 }
 
 function cmdJSConsole(e)
 {
-    client.toOpenWindowByType("global:console", "chrome://global/content/console.xul");
+    toOpenWindowByType("global:console", "chrome://global/content/console.xul");
+}
+
+function cmdDevtools(e)
+{
+    if (!client.devtoolsEnabled)
+    {
+        display(MSG_ERR_DEVTOOLS_DISABLED, MT_ERROR);
+        return;
+    }
+
+    BrowserToolboxProcess.init();
+}
+
+function cmdScratchpad(e)
+{
+    if (!client.devtoolsEnabled)
+    {
+        display(MSG_ERR_DEVTOOLS_DISABLED, MT_ERROR);
+        return;
+    }
+
+    ScratchpadManager.openScratchpad({ executionContext: 2 });
 }
 
 function cmdAboutConfig(e)
 {
-    client.toOpenWindowByType("Preferences:ConfigManager",
+    toOpenWindowByType("Preferences:ConfigManager",
                        "chrome://global/content/config.xul");
+}
+
+function cmdAboutBuildConfig(e)
+{
+    toOpenWindowByType("about:buildconfig",
+                       "chrome://global/content/buildconfig.html",
+                       "chrome,resizable,width=800,height=800");
 }
 
 function cmdPasswordManager(e)
 {
-    client.toOpenWindowByType("Toolkit:PasswordManager",
+    toOpenWindowByType("Toolkit:PasswordManager",
                        "chrome://passwordmgr/content/passwordManager.xul");
 }
 
@@ -4772,12 +4806,12 @@ function cmdUpdate(e)
 
     if (client.host != "XULRunner")
     {
-        display(getMsg(MSG_ERR_UPDATE_USEHOST), MT_ERROR);
+        display(MSG_ERR_UPDATE_USEHOST, MT_ERROR);
         return;
     }
     else if (!um)
     {
-        display(getMsg(MSG_ERR_UPDATE_DISABLED), MT_ERROR);
+        display(MSG_ERR_UPDATE_DISABLED, MT_ERROR);
         return;
     }
 
@@ -4789,7 +4823,7 @@ function cmdUpdate(e)
 
 function cmdCertificateManager(e)
 {
-    client.toOpenWindowByType("mozilla:certmanager",
+    toOpenWindowByType("mozilla:certmanager",
                        "chrome://pippki/content/certManager.xul");
 }
 
@@ -4797,11 +4831,11 @@ function cmdFlushSSL(e)
 {
     if (client.host != "XULRunner")
     {
-        display(getMsg(MSG_ERR_FLUSHSSL_USEHOST), MT_ERROR);
+        display(MSG_ERR_FLUSHSSL_USEHOST, MT_ERROR);
         return;
     }
 
     var sdr = getService("@mozilla.org/security/sdr;1", "nsISecretDecoderRing");
     sdr.logout();
-    display(getMsg(MSG_FLUSHSSL_SUCCESS));
+    display(MSG_FLUSHSSL_SUCCESS);
 }

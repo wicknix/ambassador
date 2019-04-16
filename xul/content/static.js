@@ -6,7 +6,7 @@
 #expand const __cz_guid      = "__MOZ_APP_ID__";
 const __cz_condition = "green";
 const __cz_suffix    = "";
-const __cz_locale    = "1.0.0";
+const __cz_locale    = "1.1.0";
 
 var warn;
 var ASSERT;
@@ -77,8 +77,10 @@ client.lastTabUp = new Date();
 client.awayMsgs = new Array();
 client.awayMsgCount = 5;
 client.statusMessages = new Array();
+#expand client.devtoolsEnabled = "__MOZ_DEVTOOLS__";
 
 CIRCNetwork.prototype.INITIAL_CHANNEL = "";
+CIRCNetwork.prototype.STS_MODULE = new CIRCSTS();
 CIRCNetwork.prototype.MAX_MESSAGES = 100;
 CIRCNetwork.prototype.IGNORE_MOTD = false;
 CIRCNetwork.prototype.RECLAIM_WAIT = 15000;
@@ -127,11 +129,21 @@ function init()
     initMenus();
     initStatic();
     initHandlers();
+    if (client.devtoolsEnabled)
+        initDevtools();
 
     // Create DCC handler.
     client.dcc = new CIRCDCC(client);
 
     client.ident = new IdentServer(client);
+
+    // Initialize the STS module.
+    var stsFile = new nsLocalFile(client.prefs["profilePath"]);
+    stsFile.append("sts.json");
+
+    client.sts = CIRCNetwork.prototype.STS_MODULE;
+    client.sts.init(stsFile);
+    client.sts.ENABLED = client.prefs["sts.enabled"];
 
     // Start log rotation checking first.  This will schedule the next check.
     checkLogFiles();
@@ -271,16 +283,6 @@ function initStatic()
     updateSpellcheck(client.prefs["inputSpellcheck"]);
 
     // Initialize userlist stuff
-    // cache all the atoms to stop us crossing XPCOM boundaries *all the time*
-    client.atomCache = new Object();
-    var atomSvc = getService("@mozilla.org/atom-service;1", "nsIAtomService");
-    var atoms = ["founder-true", "founder-false", "admin-true", "admin-false",
-                 "op-true", "op-false", "halfop-true", "halfop-false",
-                 "voice-true", "voice-false", "away-true", "away-false",
-                 "unselected"];
-    for (var i = 0; i < atoms.length; i++)
-        client.atomCache[atoms[i]] = atomSvc.getAtom(atoms[i]);
-
     if (client.prefs["showModeSymbols"])
         setListMode("symbol");
     else
@@ -509,8 +511,11 @@ function initApplicationCompatibility()
             case "{92650c4d-4b8e-4d2a-b7eb-24ecf4f6b63a}": // SeaMonkey
                 client.host = "Mozilla";
                 break;
-            case "{8de7fcbb-c55c-4fbe-bfc5-fc555c87dbc4}": //Pale Moon
+            case "{8de7fcbb-c55c-4fbe-bfc5-fc555c87dbc4}": // Pale Moon
                 client.host = "PaleMoon";
+                break;
+            case "{3550f703-e582-4d05-9a08-453d09bdfdc6}": // Interlink
+                client.host = "Interlink";
                 break;
             default:
                 client.unknownUID = app.ID;
@@ -1874,9 +1879,6 @@ function gotoIRCURL(url, e)
 
         if (promptToSave && client.prefs["login.promptToSave"])
             client.promptToSaveLogin(network.getURL(), "serv", "*", url.pass);
-
-        // Indicate whether we should connect using SASL.
-        network.USE_SASL = network.prefs["sasl.enabled"];
     }
 
     // Adjust secure setting for temporary networks (so user can override).
@@ -3719,12 +3721,7 @@ function ul_getrowprops(index, properties)
 
     // See bug 432482 - work around Gecko deficiency.
     if (!this.selection.isSelected(index))
-    {
-        if (!properties)
-            return "unselected";
-
-        properties.AppendElement(client.atomCache["unselected"]);
-    }
+        return "unselected";
 
     return "";
 }
@@ -3752,12 +3749,7 @@ function ul_getcellprops(index, column, properties)
     resultProps.push("founder-" + userObj.isFounder);
     resultProps.push("away-" + userObj.isAway);
 
-    if (!properties)
-        return resultProps.join(" ");
-
-    resultProps.forEach(function (element) {
-        properties.AppendElement(client.atomCache[element]);
-    });
+    return resultProps.join(" ");
 }
 
 // Retrieves the URL from the drop event data.
@@ -4446,17 +4438,17 @@ function my_splitlinesforsending(line)
  * the same network.
  */
 CIRCNetwork.prototype.display =
-function net_display(message, msgtype, sourceObj, destObj)
+function net_display(message, msgtype, sourceObj, destObj, time)
 {
     var o = getObjectDetails(client.currentObject);
     if (client.SLOPPY_NETWORKS && client.currentObject != this &&
         o.network == this && o.server && o.server.isConnected)
     {
-        client.currentObject.display(message, msgtype, sourceObj, destObj);
+        client.currentObject.display(message, msgtype, sourceObj, destObj, time);
     }
     else
     {
-        this.displayHere(message, msgtype, sourceObj, destObj);
+        this.displayHere(message, msgtype, sourceObj, destObj, time);
     }
 }
 
@@ -4466,12 +4458,12 @@ function net_display(message, msgtype, sourceObj, destObj)
  * to it; otherwise, messages go to the *network* view.
  */
 CIRCChannel.prototype.display =
-function chan_display(message, msgtype, sourceObj, destObj)
+function chan_display(message, msgtype, sourceObj, destObj, time)
 {
     if ("messages" in this)
-        this.displayHere(message, msgtype, sourceObj, destObj);
+        this.displayHere(message, msgtype, sourceObj, destObj, time);
     else
-        this.parent.parent.displayHere(message, msgtype, sourceObj, destObj);
+        this.parent.parent.displayHere(message, msgtype, sourceObj, destObj, time);
 }
 
 /* Displays a user-centric message on the most appropriate view.
@@ -4481,11 +4473,11 @@ function chan_display(message, msgtype, sourceObj, destObj)
  * the same network, or the *network* view if not.
  */
 CIRCUser.prototype.display =
-function usr_display(message, msgtype, sourceObj, destObj)
+function usr_display(message, msgtype, sourceObj, destObj, time)
 {
     if ("messages" in this)
     {
-        this.displayHere(message, msgtype, sourceObj, destObj);
+        this.displayHere(message, msgtype, sourceObj, destObj, time);
     }
     else
     {
@@ -4493,10 +4485,10 @@ function usr_display(message, msgtype, sourceObj, destObj)
         if (o.server && o.server.isConnected &&
             o.network == this.parent.parent &&
             client.currentObject.TYPE != "IRCUser")
-            client.currentObject.display(message, msgtype, sourceObj, destObj);
+            client.currentObject.display(message, msgtype, sourceObj, destObj, time);
         else
             this.parent.parent.displayHere(message, msgtype, sourceObj,
-                                           destObj);
+                                           destObj, time);
     }
 }
 
@@ -4533,9 +4525,9 @@ function this_feedback(e, message, msgtype, sourceObj, destObj)
         this.displayHere(message, msgtype, sourceObj, destObj);
 }
 
-function display (message, msgtype, sourceObj, destObj)
+function display (message, msgtype, sourceObj, destObj, time)
 {
-    client.currentObject.display (message, msgtype, sourceObj, destObj);
+    client.currentObject.display (message, msgtype, sourceObj, destObj, time);
 }
 
 client.getFontCSS =
@@ -4577,7 +4569,7 @@ CIRCChannel.prototype.displayHere =
 CIRCUser.prototype.displayHere =
 CIRCDCCChat.prototype.displayHere =
 CIRCDCCFileTransfer.prototype.displayHere =
-function __display(message, msgtype, sourceObj, destObj)
+function __display(message, msgtype, sourceObj, destObj, time)
 {
     // We need a message type, assume "INFO".
     if (!msgtype)
@@ -4671,7 +4663,10 @@ function __display(message, msgtype, sourceObj, destObj)
     var isImportant = false, getAttention = false, isSuperfluous = false;
     var viewType = this.TYPE;
     var code;
-    var time = new Date();
+    if (time)
+        time = new Date(time);
+    else
+        time = new Date();
 
     var timeStamp = strftime(this.prefs["timestamps.log"], time);
 
@@ -5327,23 +5322,6 @@ function cli_wantToQuit(reason, deliberate)
         display(MSG_CLOSING);
         client.quit(reason);
     }
-}
-
-client.toOpenWindowByType = 
-function toOpenWindowByType(inType, url, features)
-{
-    var wm = getService("@mozilla.org/appshell/window-mediator;1",
-                        "nsIWindowMediator");
-    var topWindow = wm.getMostRecentWindow(inType);
-
-    if(typeof features == "undefined")
-        features = "chrome,extrachrome,menubar,resizable," +
-                   "scrollbars,status,toolbar";
-
-    if (topWindow)
-        topWindow.focus();
-    else
-        window.open(url, "_blank", features);
 }
 
 client.promptToSaveLogin =

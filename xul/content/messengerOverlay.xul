@@ -4,27 +4,27 @@
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
 
-<!DOCTYPE overlay SYSTEM "chrome://ambassador/locale/browserOverlay.dtd" >
+<!DOCTYPE overlay SYSTEM "chrome://ambassador/locale/messengerOverlay.dtd" >
 
 <!-- This is the overlay that adds a "Chatzilla" button to the toolbar palette. -->
 
-<?xml-stylesheet href="chrome://ambassador/skin/browserOverlay.css" type="text/css"?> 
+<?xml-stylesheet href="chrome://ambassador/skin/messengerOverlay.css" type="text/css"?> 
 
-<overlay id="AmbassadorBrowserToolbar"
+<overlay id="AmbassadorMessengerToolbar"
          xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
 <script type="application/x-javascript" src="chrome://ambassador/content/ambassadorOverlay.js"/>
 
-<toolbarpalette id="BrowserToolbarPalette">
+<toolbarpalette id="MailToolbarPalette">
   <toolbarbutton id="tb-ambassador-open" oncommand="toIRC()" 
       class="toolbarbutton-1 chromeclass-toolbar-additional"
       label="&abButton.label;" tooltiptext="&abButton.label;"/>
 </toolbarpalette>
 
-<menupopup id="menu_ToolsPopup">
+<menupopup id="taskPopup">
   <menuitem id="tb-ambassador-menu" oncommand="toIRC()" 
       class="menuitem-iconic"
-      insertafter="menu_pageInfo,javascriptConsole,devToolsSeparator"
+      insertafter="activityManager"
       label="&abMenu.label;" accesskey="&abMenu.accesskey;"/>
 </menupopup>
 

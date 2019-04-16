@@ -10,23 +10,19 @@ const JSIRC_ERR_OFFLINE   = "JSIRCE:OFFLINE";
 const JSIRC_ERR_PAC_LOADING = "JSIRCE:PAC_LOADING";
 
 const JSIRCV3_SUPPORTED_CAPS = [
-    //"account-tag",
-    //"account-notify",
+    "account-notify",
+    "account-tag",
     "away-notify",
-    //"batch",
-    //"cap-notify",
+    "cap-notify",
     "chghost",
-    //"echo-message",
-    //"extended-join",
-    //"invite-notify",
-    //"labeled-response",
-    //"message-tags",
-    //"metadata",
-    //"monitor",
+    "echo-message",
+    "extended-join",
+    "invite-notify",
+    "message-tags",
     "multi-prefix",
     "sasl",
-    //"server-time",
-    //"tls",
+    "server-time",
+    "tls",
     "userhost-in-names",
 ];
 
@@ -108,6 +104,8 @@ CIRCNetwork.prototype.INITIAL_NICK = "js-irc";
 CIRCNetwork.prototype.INITIAL_NAME = "INITIAL_NAME";
 CIRCNetwork.prototype.INITIAL_DESC = "INITIAL_DESC";
 CIRCNetwork.prototype.USE_SASL = false;
+CIRCNetwork.prototype.UPGRADE_INSECURE = false;
+CIRCNetwork.prototype.STS_MODULE = null;
 /* set INITIAL_CHANNEL to "" if you don't want a primary channel */
 CIRCNetwork.prototype.INITIAL_CHANNEL = "#jsbot";
 CIRCNetwork.prototype.INITIAL_UMODE = "+iw";
@@ -385,6 +383,39 @@ function net_doconnect(e)
         host = 0;
     }
 
+    // If STS is enabled, check the cache for a secure port to connect to.
+    if (this.STS_MODULE.ENABLED && !this.serverList[host].isSecure)
+    {
+        var newPort = this.STS_MODULE.getUpgradePolicy(this.serverList[host].hostname);
+        if (newPort)
+        {
+            // If we're a temporary network, just change the server prior to connecting.
+            if (this.temporary)
+            {
+                this.serverList[host].port = newPort;
+                this.serverList[host].isSecure = true;
+            }
+            // Otherwise, find or create a server with the specified host and port.
+            else
+            {
+                var hostname = this.serverList[host].hostname;
+                var matches = this.serverList.filter(function(s) {
+                    return  s.hostname == hostname && s.port == newPort;
+                });
+                if (matches.length > 0)
+                {
+                    host = arrayIndexOf(this.serverList, matches[0]);
+                }
+                else
+                {
+                    this.addServer(hostname, newPort, true,
+                                    this.serverList[host].password);
+                    host = this.serverList.length - 1;
+                }
+            }
+        }
+    }
+
     if (this.serverList[host].isSecure || !this.requireSecurity)
     {
         ev = new CEvent ("network", "startconnect", this, "onStartConnect");
@@ -516,6 +547,7 @@ function CIRCServer (parent, hostname, port, isSecure, password)
     s.userModes = null;
     s.maxLineLength = 400;
     s.caps = new Object();
+    s.capvals = new Object();
 
     parent.servers[s.canonicalName] = s;
     if ("onInit" in s)
@@ -532,8 +564,10 @@ CIRCServer.prototype.VERSION_RPLY = "JS-IRC Library v0.01, " +
 CIRCServer.prototype.OS_RPLY = "Unknown";
 CIRCServer.prototype.HOST_RPLY = "Unknown";
 CIRCServer.prototype.DEFAULT_REASON = "no reason";
-/* true means on352 code doesn't collect hostmask, username, etc. */
+/* true means WHO command doesn't collect hostmask, username, etc. */
 CIRCServer.prototype.LIGHTWEIGHT_WHO = false;
+/* Unique identifier for WHOX commands. */
+CIRCServer.prototype.WHOX_TYPE = "314";
 /* -1 == never, 0 == prune onQuit, >0 == prune when >X ms old */
 CIRCServer.prototype.PRUNE_OLD_USERS = -1;
 
@@ -634,6 +668,106 @@ function serv_tolowercase(str)
      return str;
 }
 
+// Encodes tag data to send.
+CIRCServer.prototype.encodeTagData =
+function serv_encodetagdata(obj)
+{
+    var dict = new Object();
+    dict[";"] = ":";
+    dict[" "] = "s";
+    dict["\\"] = "\\";
+    dict["\r"] = "r";
+    dict["\n"] = "n";
+
+    // Function for escaping key values.
+    function escapeTagValue(data)
+    {
+        var rv = "";
+        for (var i = 0; i  < data.length; i++)
+        {
+            var ci = data[i];
+            var co = dict[data[i]];
+            if (co)
+                rv += "\\" + co;
+            else
+                rv += ci;
+        }
+
+        return rv;
+    }
+
+    var str = "";
+
+    for(var key in obj)
+    {
+        var val = obj[key];
+        str += key;
+        if (val)
+        {
+            str += "=";
+            str += escapeTagValue(val);
+        }
+        str += ";";
+    }
+
+    // Remove any trailing semicolons.
+    if (str[str.length - 1] == ";")
+        str = str.substring(0, str.length - 1);
+
+    return str;
+}
+
+// Decodes received tag data.
+CIRCServer.prototype.decodeTagData =
+function serv_decodetagdata(str)
+{
+    // Remove the leading '@' if we have one.
+    if (str[0] == "@")
+        str = str.substring(1);
+
+    var dict = new Object();
+    dict[":"] = ";";
+    dict["s"] = " ";
+    dict["\\"] = "\\";
+    dict["r"] = "\r";
+    dict["n"] = "\n";
+
+    // Function for unescaping key values.
+    function unescapeTagValue(data)
+    {
+        var rv = "";
+        for (var i = 0; i  < data.length; i++)
+        {
+            var ci = data[i];
+            var co = dict[data[i+1]];
+            if (ci == "\\" && i < str.length - 1)
+            {
+                if (co)
+                    rv += co;
+                else
+                    rv += data[i+1];
+                i++
+            }
+            else if (ci != "\\")
+                rv += ci;
+        }
+
+        return rv;
+    }
+
+    var obj = Object();
+
+    var tags = str.split(";");
+    for (var i = 0; i < tags.length; i++)
+    {
+        var [key, val] = tags[i].split("=");
+        val = unescapeTagValue(val);
+        obj[key] = val;
+    }
+
+    return obj;
+}
+
 // Returns the IRC URL representation of this server.
 CIRCServer.prototype.getURL =
 function serv_geturl(target, flags)
@@ -722,12 +856,7 @@ function serv_onsocketconnection(host, port, config, exception)
         ev.server = this;
         this.parent.eventPump.addEvent(ev);
         this.isConnected = true;
-
-        if (jsenv.HAS_NSPR_EVENTQ)
-            this.connection.startAsyncRead(this);
-        else
-            this.parent.eventPump.addEvent(new CEvent("server", "poll", this,
-                                                      "onPoll"));
+        this.connection.startAsyncRead(this);
     }
     else
     {
@@ -747,8 +876,13 @@ CIRCServer.prototype.onConnect =
 function serv_onconnect (e)
 {
     this.parent.primServ = e.server;
-    this.sendData("CAP LS\n");
+
+    this.sendData("CAP LS 302\n");
     this.pendingCapNegotiation = true;
+
+    this.caps = new Object();
+    this.capvals = new Object();
+
     this.login(this.parent.INITIAL_NICK, this.parent.INITIAL_NAME,
                this.parent.INITIAL_DESC);
     return true;
@@ -856,6 +990,32 @@ function serv_authabort ()
 {
     // Abort an in-progress SASL authentication.
     this.sendData("AUTHENTICATE *\n");
+}
+
+CIRCServer.prototype.sendMonitorList =
+function serv_monitorlist (nicks, isAdd)
+{
+    if (!nicks.length)
+        return;
+
+    var prefix;
+    if (isAdd)
+        prefix = "MONITOR + ";
+    else
+        prefix = "MONITOR - ";
+
+    /* Send monitor list updates in chunks less than
+       maxLineLength in size. */
+    var nicks_string = nicks.join(",");
+    while (nicks_string.length > this.maxLineLength)
+    {
+        var nicks_part = nicks_string.substring(0, this.maxLineLength);
+        var i = nicks_part.lastIndexOf(",");
+        nicks_part = nicks_string.substring(0, i);
+        nicks_string = nicks_string.substring(i + 1);
+        this.sendData(prefix + nicks_part + "\n");
+    }
+    this.sendData(prefix + nicks_string + "\n");
 }
 
 CIRCServer.prototype.addTarget =
@@ -1144,6 +1304,12 @@ function serv_disconnect(e)
         this.channels[c].active = false;
     }
 
+    if (this.isStartTLS)
+    {
+        this.isSecure = false;
+        delete this.isStartTLS;
+    }
+
     this.connection = null;
     this.isConnected = false;
 
@@ -1227,21 +1393,13 @@ function serv_poll(e)
     {
         dd ("*** Caught exception " + ex + " reading from server " +
             this.hostname);
-        if (jsenv.HAS_RHINO && (ex instanceof java.lang.ThreadDeath))
-        {
-            dd("### catching a ThreadDeath");
-            throw(ex);
-        }
-        else
-        {
-            ev = new CEvent ("server", "disconnect", this, "onDisconnect");
-            ev.server = this;
-            ev.reason = "error";
-            ev.exception = ex;
-            ev.disconnectStatus = NS_ERROR_ABORT;
-            this.parent.eventPump.addEvent (ev);
-            return false;
-        }
+        ev = new CEvent ("server", "disconnect", this, "onDisconnect");
+        ev.server = this;
+        ev.reason = "error";
+        ev.exception = ex;
+        ev.disconnectStatus = NS_ERROR_ABORT;
+        this.parent.eventPump.addEvent (ev);
+        return false;
     }
 
     this.parent.eventPump.addEvent (new CEvent ("server", "poll", this,
@@ -1283,7 +1441,7 @@ function serv_ppline(e)
         ev.data = lines[i].replace(/\r/g, "");
         if (ev.data)
         {
-            if (ev.data.match(/^(?::[^ ]+ )?(?:32[123]|352|315) /i))
+            if (ev.data.match(/^(?::[^ ]+ )?(?:32[123]|352|354|315) /i))
                 this.parent.eventPump.addBulkEvent(ev);
             else
                 this.parent.eventPump.addEvent(ev);
@@ -1325,6 +1483,18 @@ function serv_onRawData(e)
         return false;
     }
 
+    if (l[0] == "@")
+    {
+        e.tagdata = l.substring(0, l.indexOf(" "));
+        e.tags = this.decodeTagData(e.tagdata);
+        l = l.substring(l.indexOf(" ") + 1);
+    }
+    else
+    {
+        e.tagdata = new Object();
+        e.tags = new Object();
+    }
+
     if (l[0] == ":")
     {
         // Must split only on REAL spaces here, not just any old whitespace.
@@ -1350,6 +1520,11 @@ function serv_onRawData(e)
                     e.user = new CIRCUser(this, null, ary[1], ary[2], null);
             }
         }
+    }
+
+    if (("user" in e) && e.user && e.tags.account)
+    {
+        e.user.account = e.tags.account;
     }
 
     e.ignored = false;
@@ -1398,7 +1573,8 @@ function serv_onRawData(e)
     e.code = e.params[0].toUpperCase();
 
     // Ignore all private (inc. channel) messages, notices and invites here.
-    if (e.ignored && ((e.code == "PRIVMSG") || (e.code == "NOTICE") || (e.code == "INVITE") ))
+    if (e.ignored && ((e.code == "PRIVMSG") || (e.code == "NOTICE") ||
+                      (e.code == "INVITE") || (e.code == "TAGMSG")))
         return true;
 
     e.type = "parseddata";
@@ -1757,6 +1933,8 @@ CIRCServer.prototype.on330 =
 function serv_330(e)
 {
     e.user = new CIRCUser(this, null, e.params[2]);
+    var account = (e.params[3] == "*" ? null : e.params[3]);
+    this.users[e.user.canonicalName].account = account;
 
     e.destObject = this.parent;
     e.set = "network";
@@ -1837,6 +2015,50 @@ function serv_352 (e)
     return true;
 }
 
+/* extended who reply */
+CIRCServer.prototype.on354 =
+function serv_354 (e)
+{
+    // Discard if the type is not ours.
+    if (e.params[2] != this.WHOX_TYPE)
+        return;
+
+    e.userHasChanges = false;
+    if (this.LIGHTWEIGHT_WHO)
+    {
+        e.user = new CIRCUser(this, null, e.params[7]);
+    }
+    else
+    {
+        e.user = new CIRCUser(this, null, e.params[7], e.params[4], e.params[5]);
+        e.user.connectionHost = e.params[6];
+        // Hops is a separate parameter in WHOX.
+        e.user.hops = e.params[9];
+        var account = (e.params[10] == "0" ? null : e.params[10]);
+        e.user.account = account;
+        if (11 in e.params)
+        {
+            var desc = e.decodeParam(11, e.user);
+            if (e.user.desc != desc)
+            {
+                e.userHasChanges = true;
+                e.user.desc = desc;
+            }
+        }
+    }
+    var away = (e.params[8][0] == "G");
+    if (e.user.isAway != away)
+    {
+        e.userHasChanges = true;
+        e.user.isAway = away;
+    }
+
+    e.destObject = this.parent;
+    e.set = "network";
+
+    return true;
+}
+
 /* end of who */
 CIRCServer.prototype.on315 =
 function serv_315 (e)
@@ -1890,12 +2112,12 @@ function serv_353 (e)
             }
         } while (found && multiPrefix);
 
+        var ary = nick.match(/([^ ]+)!([^ ]+)@(.*)/);
         var user = null;
         var host = null;
 
-        if (this.caps["userhost-in-names"])
+        if (this.caps["userhost-in-names"] && ary)
         {
-            var ary = nick.match(/([^ ]+)!([^ ]+)@(.*)/);
             nick = ary[1];
             user = ary[2];
             host = ary[3];
@@ -1958,6 +2180,7 @@ function serv_367(e)
     {
         e.channel.bans[e.ban] = {host: e.ban, user: e.user, time: e.banTime };
         var ban_evt = new CEvent("channel", "ban", e.channel, "onBan");
+        ban_evt.tags = e.tags;
         ban_evt.channel = e.channel;
         ban_evt.ban = e.ban;
         ban_evt.source = e.user;
@@ -2073,24 +2296,54 @@ function my_cap (e)
          * capabilities are only enabled on request).
          */
         var caps = e.params[3].split(/\s+/);
+        var multiline = (e.params[3] == "*");
+        if (multiline)
+            caps = e.params[4].split(/\s+/);
+
         for (var i = 0; i < caps.length; i++)
         {
-            var cap = caps[i].replace(/^-/, "").trim();
+            var [cap, value] = caps[i].split(/=(.+)/);
+            cap = cap.replace(/^-/, "").trim();
             if (!(cap in this.caps))
                 this.caps[cap] = null;
+            if (value)
+                this.capvals[cap] = value;
         }
+
+        // Don't do anything until the end of the response.
+        if (multiline)
+            return true;
 
         //Only request capabilities we support if we are connecting.
         if (this.pendingCapNegotiation)
         {
-            var caps_req  = JSIRCV3_SUPPORTED_CAPS.filter(i => caps.indexOf(i) != -1);
-
-            //Check if we should connect with SASL.
-            var i_sasl = caps_req.indexOf("sasl");
-            if ((!this.parent.USE_SASL) && (i_sasl !== -1))
+            // If we have an STS upgrade policy, immediately disconnect
+            // and reconnect on the secure port.
+            if (this.parent.STS_MODULE.ENABLED && ("sts" in this.caps) && !this.isSecure)
             {
-                caps_req.splice(i_sasl, 1);
+                var policy = this.parent.STS_MODULE.parseParameters(this.capvals["sts"]);
+                if (policy && policy.port)
+                {
+                    e.stsUpgradePort = policy.port;
+                    e.destObject = this.parent;
+                    e.set = "network";
+                    return false;
+                }
             }
+
+            // Request STARTTLS if we are configured to do so.
+            if (!this.isSecure && ("tls" in this.caps) && this.parent.UPGRADE_INSECURE)
+                this.sendData("STARTTLS\n");
+
+            var caps_req = JSIRCV3_SUPPORTED_CAPS.filter(i => (i in this.caps));
+
+            // Don't send requests for these caps.
+            caps_noreq = ["tls", "sts", "echo-message"];
+
+            if (!this.parent.USE_SASL)
+                caps_noreq.push("sasl");
+
+            caps_req = caps_req.filter(i => caps_noreq.indexOf(i) === -1);
 
             if (caps_req.length > 0)
             {
@@ -2102,9 +2355,6 @@ function my_cap (e)
                 e.server.sendData("CAP END\n");
                 delete this.pendingCapNegotiation;
             }
-
-            //Don't show the raw message while connecting.
-            return true;
         }
     }
     else if (e.params[2] == "LIST")
@@ -2112,10 +2362,18 @@ function my_cap (e)
         /* Received list of enabled capabilities. Just use this as a sanity
          * check. */
         var caps = e.params[3].trim().split(/\s+/);
+        var multiline = (e.params[3] == "*");
+        if (multiline)
+            caps = e.params[4].trim().split(/\s+/);
+
         for (var i = 0; i < caps.length; i++)
         {
             this.caps[caps[i]] = true;
         }
+
+        // Don't do anything until the end of the response.
+        if (multiline)
+            return true;
     }
     else if (e.params[2] == "ACK")
     {
@@ -2123,29 +2381,37 @@ function my_cap (e)
          * capability is just "cap" whilst a disabled capability is "-cap".
          */
         var caps = e.params[3].trim().split(/\s+/);
+        e.capsOn = new Array();
+        e.capsOff = new Array();
         for (var i = 0; i < caps.length; i++)
         {
-            var cap = caps[i];
-            e.cap = cap.replace(/^-/, "").trim();
-            e.capEnabled = cap[0] != "-";
-            this.caps[e.cap] = e.capEnabled;
+            var cap = caps[i].replace(/^-/,"").trim();
+            var enabled = caps[i][0] != "-";
+            if (enabled)
+                e.capsOn.push(cap);
+            else
+                e.capsOff.push(cap);
+            this.caps[cap] = enabled;
+        }
+
+        // Try SASL authentication if we are configured to do so.
+        if (caps.indexOf("sasl") != -1)
+        {
+            var ev = new CEvent("server", "sasl-start", this, "onSASLStart");
+            ev.server = this;
+            if (this.capvals["sasl"])
+                ev.mechs = this.capvals["sasl"].toLowerCase().split(/,/);
+            ev.destObject = this.parent;
+            this.parent.eventPump.routeEvent(ev);
+
+            if (this.pendingCapNegotiation)
+                return true;
         }
 
         if (this.pendingCapNegotiation)
         {
-            // Try SASL authentication if we are configured to do so.
-            if (caps.indexOf("sasl") != -1)
-            {
-                var ev = new CEvent("server", "sasl-start", this, "onSASLStart");
-                ev.server = this;
-                ev.mechs = null; // Not implemented yet.
-                this.parent.eventPump.addEvent(ev);
-            }
-            else
-            {
-                e.server.sendData("CAP END\n");
-                delete this.pendingCapNegotiation;
-            }
+            e.server.sendData("CAP END\n");
+            delete this.pendingCapNegotiation;
 
             //Don't show the raw message while connecting.
             return true;
@@ -2154,7 +2420,65 @@ function my_cap (e)
     else if (e.params[2] == "NAK")
     {
         // A capability change has failed.
-        e.cap = e.params[3].replace(/^-/, "").trim();
+        var caps = e.params[3].trim().split(/\s+/);
+        e.caps = new Array();
+        for (var i = 0; i < caps.length; i++)
+        {
+            var cap = caps[i].replace(/^-/, "").trim();
+            e.caps.push(cap);
+        }
+
+        if (this.pendingCapNegotiation)
+        {
+            e.server.sendData("CAP END\n");
+            delete this.pendingCapNegotiation;
+
+            //Don't show the raw message while connecting.
+            return true;
+        }
+    }
+    else if (e.params[2] == "NEW")
+    {
+        // A capability is now available, so request it if we can.
+        var caps = e.params[3].split(/\s+/);
+        e.newcaps = [];
+        for (var i = 0; i < caps.length; i++)
+        {
+            var [cap, value] = caps[i].split(/=(.+)/);
+            cap = cap.trim();
+            this.caps[cap] = null;
+            e.newcaps.push(cap);
+            if (value)
+                this.capvals[cap] = value;
+        }
+
+        var caps_req = JSIRCV3_SUPPORTED_CAPS.filter(i => (i in e.newcaps));
+
+        // Don't send requests for these caps.
+        caps_noreq = ["tls", "sts", "sasl", "echo-message"];
+        caps_req = caps_req.filter(i => caps_noreq.indexOf(i) === -1);
+
+        if (caps_req.length > 0)
+        {
+            caps_req = caps_req.join(" ");
+            e.server.sendData("CAP REQ :" + caps_req + "\n");
+        }
+    }
+    else if (e.params[2] == "DEL")
+    {
+        // A capability is no longer available.
+        var caps = e.params[3].split(/\s+/);
+        var caps_nodel = ["sts"];
+        for (var i = 0; i < caps.length; i++)
+        {
+            var cap = caps[i].split(/=(.+)/)[0];
+            cap = cap.trim();
+
+            if (arrayContains(caps_nodel, cap))
+                continue;
+
+            this.caps[cap] = null;
+        }
     }
     else
     {
@@ -2168,12 +2492,49 @@ function my_cap (e)
 /* SASL authentication responses */
 CIRCServer.prototype.on902 = /* Nick locked */
 CIRCServer.prototype.on903 = /* Auth success */
-CIRCServer.prototype.on904 = /* Wrong credentials */
+CIRCServer.prototype.on904 = /* Auth failed */
 CIRCServer.prototype.on905 = /* Command too long */
+CIRCServer.prototype.on906 = /* Aborted */
+CIRCServer.prototype.on907 = /* Already authenticated */
+CIRCServer.prototype.on908 = /* Mechanisms */
 function cap_on900 (e)
 {
-    delete this.pendingCapNegotiation;
-    this.sendData("CAP END\n");
+    if (this.pendingCapNegotiation)
+    {
+        delete this.pendingCapNegotiation;
+        this.sendData("CAP END\n");
+    }
+
+    if (e.code == "908")
+    {
+        // Update our list of SASL mechanics.
+        this.capvals["sasl"] = e.params[2];
+    }
+
+    e.destObject = this.parent;
+    e.set = "network";
+}
+
+/* STARTTLS responses */
+CIRCServer.prototype.on670 = /* Success */
+function cap_on670 (e)
+{
+    this.caps["tls"] = true;
+    e.server.connection.startTLS();
+    e.server.isSecure = true;
+    e.server.isStartTLS = true;
+
+    e.destObject = this.parent;
+    e.set = "network";
+}
+
+CIRCServer.prototype.on691 = /* Failure */
+function cap_on691 (e)
+{
+    this.caps["tls"] = false;
+
+    e.destObject = this.parent;
+    e.set = "network";
 }
 
 /* User away status changed */
@@ -2383,6 +2744,7 @@ function serv_nick (e)
             cuser.updateSortName();
 
             ev = new CEvent ("channel", "nick", this.channels[c], "onNick");
+            ev.tags = e.tags;
             ev.channel = this.channels[c];
             ev.user = cuser;
             ev.server = this;
@@ -2395,6 +2757,7 @@ function serv_nick (e)
     {
         /* if it was me, tell the network about the nick change as well */
         ev = new CEvent ("network", "nick", this.parent, "onNick");
+        ev.tags = e.tags;
         ev.user = e.user;
         ev.server = this;
         ev.oldNick = e.oldNick;
@@ -2419,6 +2782,7 @@ function serv_quit (e)
         {
             var ev = new CEvent ("channel", "quit", e.server.channels[c],
                                  "onQuit");
+            ev.tags = e.tags;
             ev.user = e.server.channels[c].users[e.user.canonicalName];
             ev.channel = e.server.channels[c];
             ev.server = ev.channel.parent;
@@ -2486,6 +2850,14 @@ function serv_join(e)
     e.user = new CIRCChanUser(e.channel, e.user.unicodeName, null,
                               undefined, true);
 
+    if (e.params[2] && e.params[3])
+    {
+        var account = (e.params[2] == "*" ? null : e.params[2]);
+        var desc = e.decodeParam([3], e.user);
+        this.users[e.user.canonicalName].account = account;
+        this.users[e.user.canonicalName].desc = desc;
+    }
+
     if (userIsMe(e.user))
     {
         var delayFn1 = function(t) {
@@ -2517,7 +2889,12 @@ function serv_join(e)
             //If away-notify is active, query the list of users for away status.
             if (e.server.caps["away-notify"])
             {
-                e.server.sendData("WHO " + e.channel.encodedName + "\n");
+                // If the server supports extended who, use it.
+                // This lets us initialize the account property.
+                if (e.server.supports["whox"])
+                    e.server.who(e.channel.unicodeName + " %acdfhnrstu," + e.server.WHOX_TYPE);
+                else
+                    e.server.who(e.channel.unicodeName);
             }
         };
         // Between 10s - 20s.
@@ -2538,6 +2915,15 @@ function serv_join(e)
 
     e.destObject = e.channel;
     e.set = "channel";
+
+    return true;
+}
+
+CIRCServer.prototype.onAccount =
+function serv_acct (e)
+{
+    var account = (e.params[1] == "*" ? null : e.params[1]);
+    this.users[e.user.canonicalName].account = account;
 
     return true;
 }
@@ -2582,6 +2968,7 @@ function serv_invite(e)
 
 CIRCServer.prototype.onNotice =
 CIRCServer.prototype.onPrivmsg =
+CIRCServer.prototype.onTagmsg =
 function serv_notice_privmsg (e)
 {
     var targetName = e.params[1];
@@ -2625,7 +3012,7 @@ function serv_notice_privmsg (e)
     /* The capability identify-msg adds a + or - in front the message to
      * indicate their network registration status.
      */
-    if (this.caps["identify-msg"])
+    if (("identify-msg" in this.caps) && this.caps["identify-msg"])
     {
         e.identifyMsg = false;
         var flag = e.params[2].substring(0,1);
@@ -2643,6 +3030,13 @@ function serv_notice_privmsg (e)
             // Just print to console on failure - or we'd spam the user
             dd("Warning: IDENTIFY-MSG is on, but there's no message flags");
         }
+    }
+
+    // TAGMSG doesn't have a message parameter, so just pass it on.
+    if (e.code == "TAGMSG")
+    {
+        e.destObject = e.replyTo;
+        return true;
     }
 
     if (e.params[2].search (/^\x01[^ ]+.*\x01$/) != -1)
@@ -2768,6 +3162,16 @@ function serv_ctcp (e)
     }
     else
         e.destObject = this;
+
+    var ev = new CEvent("server", "ctcp-receive", this, "onReceiveCTCP");
+    ev.tags = e.tags;
+    ev.server = this;
+    ev.CTCPCode = e.CTCPCode;
+    ev.CTCPData = e.CTCPData;
+    ev.type = e.type;
+    ev.user = e.user;
+    ev.destObject = this.parent;
+    this.parent.eventPump.addEvent(ev);
 
     return true;
 }
@@ -3419,6 +3823,7 @@ function CIRCUser(parent, unicodeName, encodedName, name, host)
     this.name = name;
     this.host = host;
     this.desc = "";
+    this.account = null;
     this.connectionHost = null;
     this.isAway = false;
     this.modestr = this.parent.parent.INITIAL_UMODE;
